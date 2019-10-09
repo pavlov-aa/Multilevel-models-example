@@ -1,0 +1,233 @@
+---
+title: "Exploring Bacteria"
+author: "Pavlov Alexander"
+date: '20 декабря 2018 г '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Getting ready
+
+This time we are going to conduct study concerning bacteria number of colonies forming units (cfu's) of airborne bacteria in the air in and around Graz. 
+
+```{r, warning=FALSE}
+library("readxl")
+library("RColorBrewer")
+library("MASS")
+library("lme4")
+pal<-brewer.pal(8,"Set3")
+
+```
+
+# Access Data
+
+You can find the data either in http://www.stat.tugraz.
+at/courses/files/BacteriaData.xlsx (sheet bacteria) or by clicking on Bacteria
+Data at http://www.stat.tugraz.at/courses/glmLjubljana.html (only for those of
+you experiencing troubles with the use of read.xls from within R).
+The data resulted from a one year study in which bacteria/fungi (actually the number of
+colonies forming units, cfu's) in the outdoor air were monitored at 7 dierent sites that
+can be characterized as follows:
+
+(a) village zone, near big farms with liquid manure pits and dung-hills;
+(b) grassland and arable land, without buildings;
+(c) suburban area with one-family houses and small farms;
+(d) busy crossing, near a slaughter-house;
+(e) public park on top of the Schloberg in the center of Graz;
+(f) living area with apartment buildings and gardens;
+(g) as for (f) but with compost arrangements.
+
+Let us load the data into R:
+
+```{r}
+setwd("C:/Users/pavlov-aa/Desktop/GLM Multilevel")
+ds<-read_xlsx("bacteriaData.xlsx")
+ds<-data.frame(ds)
+```
+
+
+# Data Manipulation
+
+Now let's prepare dataset for analysis:
+1) Date and Site variables to factors
+2) Create dependent variables of interest: "bac" and "fun" as sums of bi and fi
+3) Check the structure
+
+```{r}
+ds[,1]<-as.factor(ds[,1])
+ds[,2]<-as.factor(ds[,2])
+
+ds[,"bac"]<-ds[,"b1"]+ds[,"b2"]+ds[,"b3"]+ds[,"b4"]+ds[,"b5"]+ds[,"b6"]
+ds[,"fun"]<-ds[,"f1"]+ds[,"f2"]+ds[,"f3"]+ds[,"f4"]+ds[,"f5"]+ds[,"f6"]
+
+str(ds)
+```
+
+Now, structure seems to be okay.
+
+# Linear Regression
+
+After validating models with different parameters we can see 2 best:
+
+```{r ols}
+lm6<-lm(data=ds, bac~temp+site)
+lm7<-lm(data=ds, bac~humi+temp+site)
+summary(lm6)
+summary(lm7)
+mylm<-lm6
+```
+
+lm6 model has a bit less R2, but all the variable are significant and higher R2 adjusted. I think its more safe to drop "humi" and count lm6 as the best linear model without transforming variables.
+
+```{r plotting best linear model}
+plot(lm6)
+```
+
+Normal Q-Q plot shows us that actually there are many observations with high error.
+Taking into account, that R2 adjusted is about 30% we can say that model is weak.
+
+Also lets look at interdependency between dependent and independent variables:
+
+```{r echo=FALSE}
+plot(ds$humi, ds$bac, xlab="Humidity", ylab="Bacteria colonies",main="Bacteria colines versus Humidity",col=pal); lines(lowess(ds$humi, ds$bac))
+plot(ds$temp, ds$bac, xlab="Temperature", ylab="Bacteria colonies",main="Bacteria colines versus Temperature",col=pal); lines(lowess(ds$temp, ds$bac))
+boxplot(ds$bac~ds$site, xlab="Site", ylab="Bacteria colonies",main="Bacteria colines versus Site",col=pal)
+```
+
+Humidity doesn't help with explaining Bacteria colonies. 
+More temperature - more colonies and more variation. So, heterogenity exists.
+In some places the ditribution may distinguish significantly.
+
+And what about humi and temp of degree 2?
+
+```{r quadro}
+lm9<-lm(data=ds, bac~humi+temp+site+I(humi^2)+I(temp^2))
+summary(lm9)
+```
+
+Better results but still R2 adjusted is not high. And suddenly humi became significant. But its not good. Plot showed that humi is uninformative.
+
+What about assumptions?
+
+``` {r assumptions, echo=FALSE}
+hist(ds$bac,breaks=30,col=pal,xlab="Bacteria colonies",main="Histogram of colonies")
+hist(ds$temp,breaks=30,col=pal,xlab="Temperature",main="Histogram of Temperature")
+hist(ds$humi,breaks=30,col=pal,xlab="Humidity",main="Boxplot of Humidity")
+```
+
+Plot show us, that the distribution is not normal. So, assumptions are not met.
+And what about residuals?
+
+```{r errors, echo=FALSE}
+plot(ds$bac, residuals(mylm),xlab="Bacteria colonies", ylab="residuals",main="Residuals of mylm"); abline(0, 0)
+lines(lowess(ds$bac, residuals(mylm))) 
+```
+
+Bad situation. Maybe Box-Cox will help?
+
+# Box-Cox Transformation
+
+```{r bc}
+
+bc<-boxcox(ds$bac~ds$humi+ds$temp+ds$site,lambda=seq(0.0,0.6,length=100),plotit=T)
+ml.index <- which(bc$y == max(bc$y))
+bc$x[ml.index]
+lambda<-1/4
+
+mylmBC<-lm(data=ds, ((bac^lambda)-1)/lambda~humi+temp+site)
+
+plot(ds$bac, residuals(mylmBC), ylab="residuals"); abline(0, 0)
+
+summary(mylmBC)
+summary(mylm)
+
+```
+
+With Box-Cox transformation it became a bit better. With lambda =1 and =0 its worse.
+
+```{r}
+lambda<-1
+mylmBC2<-lm(data=ds, ((bac^lambda)-1)/lambda~humi+temp+site)
+mylmBC3<-lm(data=ds, log(bac)~humi+temp+site)
+summary(mylmBC) # best
+summary(mylmBC2) # poor
+summary(mylmBC3) # poor
+plot(mylmBC)
+```
+
+# GLM
+```{r glm}
+myglm<-glm(data=ds,bac~temp+site, family=gaussian(link="log"))
+myglm2<-glm(data=ds,bac~temp+site,family=Gamma(link="log"))
+
+summary(myglm)
+plot(myglm)
+plot(mylm)
+
+plot(ds$bac, residuals(mylm), ylab="residuals"); abline(0, 0)
+lines(lowess(ds$bac, residuals(mylm))) 
+lines(lowess(ds$bac, residuals(myglm)),col="red") 
+lines(lowess(ds$bac, residuals(myglm2)),col="blue") 
+
+plot(myglm2)
+```
+
+Gamma is great. Residuals became smaller.
+
+Prediction regions: site=6, humi=0.6
+```{r pr}
+m1<-min(ds$temp)
+m2<-max(ds$temp)
+temp<-seq(m1,m2,1)
+site<-rep(6,38)
+test<-data.frame(temp,"site"=as.factor(site))
+
+p1<-predict.glm(myglm,test)
+p2<-predict.glm(myglm2,test)
+
+plot(temp,p1,main="Prediction region of colonies vs temp (points-glm1/red line-glm2)")
+lines(temp,p2,col="red")
+```
+
+# Multilevel Models
+
+```{r m}
+
+lambda<-1/4
+ds$bac_bc<-((ds$bac^lambda)-1)/lambda
+hist(ds$bac_bc,breaks=30,col=pal,xlab="Bacteria colonies after Box-Cox",main="Histogram of colonies after Box-Cox") # okay seems to be normal
+
+
+mlmod<- glmer(I(bac_bc+0.0001) ~ site+(temp+humi|date),data=ds,family=gaussian(link="log"))
+mlmod2<- glmer(I(bac_bc+0.0001) ~ site+(temp+humi|date),data=ds, family=Gamma(link="log"))
+
+summary(mlmod)
+summary(mlmod2)
+
+```
+
+# AIC of all models:
+
+```{r}
+
+AIC(mylm)
+AIC(mylmBC)
+AIC(myglm)
+AIC(myglm2)
+AIC(mlmod) # best
+AIC(mlmod2)
+
+```
+
+# Conclusion
+
+In this case Box-Cox and Multilevel modelling gave us better results. Final diagnostics for mlmod model:
+
+```{r dia}
+plot(mlmod)
+```
+
+The results are similar to Box-Cox transformation.
